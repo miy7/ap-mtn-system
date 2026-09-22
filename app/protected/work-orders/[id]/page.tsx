@@ -1,0 +1,12 @@
+import { notFound, redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+
+export default async function WorkOrderDetail({ params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) redirect('/auth/login')
+  const { id } = await params
+  const { data: order } = await supabase.from('work_orders').select('id, work_order_number, system_type, status, assigned_technician, scheduled_at, resolution, technician_notes, created_at, updated_at, maintenance_requests(problem, priority, asset_number, customers(name))').eq('id', id).single()
+  if (!order) notFound()
+  const { data: historyRows } = await supabase.from('audit_logs').select('action, before_data, after_data, created_at').eq('entity_id', id).order('created_at', { ascending: false })
+  const request: any = order.maintenance_requests
+  return <main className="internal-content"><a className="back-link" href="/protected/work-orders">← Work orders</a><div className="welcome-row"><div><p className="eyebrow">{order.system_type}</p><h1>{order.work_order_number}</h1><p className="sub">{request?.problem}</p></div><span className="status">{order.status.replaceAll('_', ' ')}</span></div><section className="surface work-order-surface"><div className="detail-grid"><p><b>Customer</b><span>{request?.customers?.name ?? 'ไม่ระบุ'}</span></p><p><b>Equipment</b><span>{request?.asset_number ?? 'ไม่ระบุ'}</span></p><p><b>Priority</b><span>{request?.priority ?? 'NORMAL'}</span></p><p><b>Assigned staff</b><span>{order.assigned_technician || 'ยังไม่มอบหมาย'}</span></p><p><b>Created</b><span>{new Date(order.created_at).toLocaleString('th-TH')}</span></p><p><b>Updated</b><span>{new Date(order.updated_at).toLocaleString('th-TH')}</span></p></div></section><section className="surface work-order-surface"><div className="section-heading"><h2>Maintenance history</h2></div><div className="order-list">{(historyRows ?? []).map((item: any, index: number) => <article className="order-row" key={`${item.created_at}-${index}`}><div className="order-main"><h3>{item.action.replaceAll('_', ' ')}</h3><p>{item.before_data?.status ? `${item.before_data.status} → ` : ''}{item.after_data?.status || 'recorded'}</p></div><time>{new Date(item.created_at).toLocaleString('th-TH')}</time></article>)}{!(historyRows ?? []).length && <p className="empty-message">ยังไม่มี activity log</p>}</div></section></main>
+}

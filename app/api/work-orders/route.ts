@@ -6,6 +6,16 @@ function errorResponse(message: string, status: number, code: string) {
   return NextResponse.json({ success: false, error: { code, message } }, { status, headers: { 'Cache-Control': 'no-store' } })
 }
 
+export async function GET() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return errorResponse('กรุณาเข้าสู่ระบบ', 401, 'UNAUTHORIZED')
+  const { data, error } = await supabase.from('work_orders').select('id, work_order_number, customer_id, site_id, equipment_id, system_type, status, priority, assigned_technician, completed_at, created_at, customers(name), assets(asset_number, name)')
+    .order('created_at', { ascending: false })
+  if (error) return errorResponse('ไม่สามารถโหลด work orders ได้', 500, 'WORK_ORDERS_LOAD_FAILED')
+  return NextResponse.json({ success: true, data })
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

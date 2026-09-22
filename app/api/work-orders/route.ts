@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const WORK_ORDER_STATUSES = new Set(['PENDING', 'ASSIGNED', 'ACCEPTED', 'SCHEDULED', 'IN_PROGRESS', 'WAITING_PART', 'WAITING_CUSTOMER', 'COMPLETED', 'CLOSED', 'CANCELLED'])
-
 function errorResponse(message: string, status: number, code: string) {
   return NextResponse.json({ success: false, error: { code, message } }, { status, headers: { 'Cache-Control': 'no-store' } })
 }
@@ -19,34 +17,30 @@ export async function POST(request: Request) {
 
   const input = body as Record<string, unknown>
   const requestId = typeof input.request_id === 'string' ? input.request_id : ''
-  const status = typeof input.status === 'string' ? input.status : 'PENDING'
-  const systemType = typeof input.system_type === 'string' ? input.system_type : 'ELECTRICAL'
-  const assignedTechnician = typeof input.assigned_technician === 'string' ? input.assigned_technician.trim() : null
   const priority = typeof input.priority === 'string' ? input.priority : 'NORMAL'
-  const scheduledAt = typeof input.scheduled_at === 'string' ? input.scheduled_at : null
   if (!UUID_PATTERN.test(requestId)) return errorResponse('ไม่พบรายการแจ้งซ่อม', 400, 'INVALID_REQUEST_ID')
-  if (!WORK_ORDER_STATUSES.has(status)) return errorResponse('สถานะงานไม่ถูกต้อง', 400, 'INVALID_STATUS')
-  if (!['ELECTRICAL', 'CCTV'].includes(systemType)) return errorResponse('ประเภทงานไม่ถูกต้อง', 400, 'INVALID_SYSTEM_TYPE')
   if (!['NORMAL', 'HIGH', 'URGENT'].includes(priority)) return errorResponse('ระดับความสำคัญไม่ถูกต้อง', 400, 'INVALID_PRIORITY')
-  if (assignedTechnician && assignedTechnician.length > 120) return errorResponse('ชื่อช่างยาวเกินไป', 400, 'INVALID_TECHNICIAN')
-  if (scheduledAt && Number.isNaN(Date.parse(scheduledAt))) return errorResponse('วันเวลานัดหมายไม่ถูกต้อง', 400, 'INVALID_SCHEDULE')
 
-  const { data: maintenanceRequest, error: requestError } = await supabase.from('maintenance_requests').select('id, customer_id, site_id, asset_id, asset_number, status').eq('id', requestId).single()
+  const { data: maintenanceRequest, error: requestError } = await supabase.from('maintenance_requests').select('id, customer_id, site_id, asset_id, status').eq('id', requestId).single()
   if (requestError || !maintenanceRequest) return errorResponse('ไม่พบรายการแจ้งซ่อม', 404, 'REQUEST_NOT_FOUND')
-  if (maintenanceRequest.status === 'CANCELLED') return errorResponse('ไม่สามารถสร้างงานจากรายการที่ยกเลิกแล้ว', 409, 'REQUEST_CANCELLED')
-  if (maintenanceRequest.status === 'CONVERTED_TO_WORK_ORDER') return errorResponse('รายการนี้ถูกสร้างเป็นใบงานแล้ว', 409, 'ALREADY_CONVERTED')
+  if (!maintenanceRequest.asset_id) return errorResponse('รายการนี้ยังไม่มีอุปกรณ์ที่ตรวจสอบได้', 400, 'EQUIPMENT_REQUIRED')
 
-  if (maintenanceRequest.asset_id) {
-    const { data: asset, error: assetError } = await supabase.from('assets').select('id, customer_id, site_id, system_type').eq('id', maintenanceRequest.asset_id).single()
-    if (assetError || !asset || asset.customer_id !== maintenanceRequest.customer_id || asset.site_id !== maintenanceRequest.site_id || asset.system_type !== systemType) return errorResponse('อุปกรณ์ไม่สอดคล้องกับลูกค้า ไซต์ หรือประเภทงาน', 400, 'INVALID_ASSET_SCOPE')
+  const { data: workOrder, error: workOrderError } = await supabase.rpc('create_work_order_atomic', {
+    p_request_id: requestId,
+    p_customer_id: maintenanceRequest.customer_id,
+    p_site_id: maintenanceRequest.site_id,
+    p_equipment_id: maintenanceRequest.asset_id,
+    p_problem: '',
+    p_priority: priority,
+    p_assigned_staff: null,
+  }).select('id, work_order_number, system_type, status, priority')
+
+  if (workOrderError || !workOrder) {
+    const message = workOrderError?.message ?? ''
+    if (message.includes('invalid request scope')) return errorResponse('รายการนี้ถูกยกเลิกหรือถูกสร้างเป็นใบงานแล้ว', 409, 'REQUEST_NOT_CONVERTIBLE')
+    if (message.includes('invalid equipment scope')) return errorResponse('อุปกรณ์ไม่สอดคล้องกับลูกค้าหรือไซต์', 400, 'INVALID_ASSET_SCOPE')
+    return errorResponse('ไม่สามารถสร้างใบงานได้', 500, 'WORK_ORDER_CREATE_FAILED')
   }
 
-  const { data: workOrder, error: workOrderError } = await supabase.from('work_orders').insert({ request_id: requestId, customer_id: maintenanceRequest.customer_id, site_id: maintenanceRequest.site_id, system_type: systemType, status, priority, assigned_technician: assignedTechnician, scheduled_at: scheduledAt }).select('id, work_order_number, system_type, status, priority').single()
-  if (workOrderError) return errorResponse('ไม่สามารถสร้างใบงานได้', 500, 'WORK_ORDER_CREATE_FAILED')
-
-  const { error: updateError } = await supabase.from('maintenance_requests').update({ status: 'CONVERTED_TO_WORK_ORDER', updated_at: new Date().toISOString() }).eq('id', requestId)
-  if (updateError) return errorResponse('สร้างใบงานแล้ว แต่ไม่สามารถอัปเดตสถานะรายการแจ้งซ่อมได้', 500, 'REQUEST_STATUS_UPDATE_FAILED')
-
-  await supabase.from('audit_logs').insert({ actor_id: user.id, action: 'CREATE_WORK_ORDER', entity: 'work_order', entity_id: workOrder.id, after_data: workOrder })
   return NextResponse.json({ success: true, data: workOrder }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
 }

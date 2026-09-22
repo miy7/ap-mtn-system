@@ -1,6 +1,73 @@
 'use client'
-import { useState } from 'react'
-const requests=[['MR-1048','ABC Company · HQ','CAM-042','Camera not displaying','HIGH','2 min ago'],['MR-1047','Metro Retail · Rama 9','AHU-08','Airflow below threshold','NORMAL','18 min ago'],['MR-1046','Siam Foods · Plant 2','PMP-114','Abnormal vibration','URGENT','42 min ago'],['MR-1045','Northstar Offices · Floor 8','AC-082','Temperature unstable','NORMAL','1 hr ago']]
-export default function Home(){const [active,setActive]=useState('Overview'); return <div className="shell"><aside className="sidebar"><div className="brand">maint<span>en</span>ance</div><nav className="nav"><small>Workspace</small>{['Overview','Requests','Work orders','Calendar'].map(x=><button className={active===x?'active':''} onClick={()=>setActive(x)} key={x}>{x}</button>)}<small>Manage</small>{['Customers','Assets','Technicians','Reports'].map(x=><button className={active===x?'active':''} onClick={()=>setActive(x)} key={x}>{x}</button>)}</nav><div className="profile"><div className="avatar">KS</div><div><b>Krit S.</b><span>Administrator</span></div></div></aside><main className="main"><header className="top"><div><div className="eyebrow">Monday, 20 September 2026</div><h1>Good morning, Krit</h1><p className="sub">Here&apos;s what&apos;s happening across your maintenance operation.</p></div><div className="actions"><button className="btn">Export report</button><button className="btn primary">+ New request</button></div></header><section className="stats"><Stat label="New requests" value="24" trend="↑ 12.5% vs last week"/><Stat label="Open work orders" value="18" trend="↓ 4.2% vs last week"/><Stat label="In progress" value="11" trend="↑ 8.1% vs last week"/><Stat label="Overdue" value="3" trend="Needs attention" warn/></section><div className="workspace"><section className="card"><div className="cardhead"><h2>Recent requests</h2><button className="link">View all →</button></div><table className="table"><thead><tr><th>REQUEST</th><th>LOCATION</th><th>ASSET</th><th>PRIORITY</th><th>RECEIVED</th></tr></thead><tbody>{requests.map(r=><tr key={r[0]}><td className="id">{r[0]}</td><td>{r[1]}</td><td className="muted">{r[2]}</td><td><span className={'badge '+(r[4]==='NORMAL'?'teal':'')}>{r[4]}</span></td><td className="muted">{r[5]}</td></tr>)}</tbody></table></section><section className="card"><div className="cardhead"><h2>Work order status</h2><select className="filter" defaultValue="week"><option value="week">This week</option></select></div><div className="bars">{[['Mon',55],['Tue',80],['Wed',48],['Thu',92],['Fri',65],['Sat',35],['Sun',22]].map(([d,n],i)=><div className="barwrap" key={d}><div className={'bar '+(i===3?'current':'')} style={{height:`${n}%`}}></div><span>{d}</span></div>)}</div></section></div><div className="workspace"><section className="card"><div className="cardhead"><h2>Technician workload</h2><button className="link">Manage team →</button></div><table className="table"><tbody>{[['PT','Preecha T.','Bangkok team','5 jobs','teal'],['NA','Narin A.','Field team','4 jobs','orange'],['SJ','Somsak J.','Bangkok team','2 jobs','gray']].map(r=><tr key={r[1]}><td><div className="avatar">{r[0]}</div></td><td><b>{r[1]}</b><br/><span className="muted">{r[2]}</span></td><td><span className={'badge '+(r[4]==='teal'?'teal':'')}>{r[3]}</span></td><td className="muted">View →</td></tr>)}</tbody></table></section><section className="card"><div className="cardhead"><h2>Activity</h2><button className="link">See history →</button></div><div className="feed"><Feed title="Work order WO-2081 completed" text="Preecha T. · 8 minutes ago"/><Feed title="New request from ABC Company" text="Submitted via QR code · 21 minutes ago"/><Feed title="WO-2078 assigned to Narin A." text="Krit S. · 36 minutes ago"/></div></section></div></main></div>}
-function Stat({label,value,trend,warn=false}:{label:string,value:string,trend:string,warn?:boolean}){return <div className="card"><div className="statlabel">{label}</div><div className="stat">{value}</div><div className="trend" style={warn?{color:'var(--orange)'}:{}}>{trend}</div></div>}
-function Feed({title,text}:{title:string,text:string}){return <div className="feeditem"><i className="dot"/><div><b>{title}</b><p>{text}</p></div></div>}
+
+import { Search, Users, Box, ClipboardList, History, Settings, FileText, ChevronRight } from 'lucide-react'
+import { useMemo, useState } from 'react'
+
+const workOrders = [
+  { id: 'WO-1048', customer: 'ABC Company', equipment: 'CCTV 012367', issue: 'ภาพไม่แสดงผล', status: 'In Progress', priority: 'High', date: 'วันนี้ 09:42' },
+  { id: 'WO-1047', customer: 'Metro Retail', equipment: 'AHU 08', issue: 'แรงลมต่ำกว่าปกติ', status: 'Waiting', priority: 'Normal', date: 'วันนี้ 08:18' },
+  { id: 'WO-1046', customer: 'Siam Foods', equipment: 'Pump 114', issue: 'มีเสียงสั่นผิดปกติ', status: 'New', priority: 'Urgent', date: 'เมื่อวาน' },
+  { id: 'WO-1045', customer: 'Northstar Offices', equipment: 'AC 082', issue: 'อุณหภูมิไม่คงที่', status: 'Completed', priority: 'Normal', date: '18 ก.ย. 2026' },
+]
+
+const quickLinks = [
+  { label: 'Customers', detail: 'ลูกค้าและข้อมูลติดต่อ', icon: Users },
+  { label: 'Equipment', detail: 'อุปกรณ์ทั้งหมด', icon: Box },
+  { label: 'Work Orders', detail: 'งานซ่อมที่กำลังดำเนินการ', icon: ClipboardList },
+  { label: 'History', detail: 'ประวัติการซ่อมถาวร', icon: History },
+]
+
+export default function Home() {
+  const [query, setQuery] = useState('')
+  const filteredOrders = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return workOrders
+    return workOrders.filter((order) => Object.values(order).some((value) => value.toLowerCase().includes(normalized)))
+  }, [query])
+
+  return (
+    <div className="internal-shell">
+      <header className="internal-header">
+        <div className="brand-mark">maint<span>en</span>ance</div>
+        <nav className="top-nav" aria-label="Main navigation">
+          <a className="active" href="/">Home</a>
+          <a href="/protected">Work Orders</a>
+          <a href="/protected">Customers</a>
+          <a href="/protected">Equipment</a>
+        </nav>
+        <div className="user-chip"><span className="avatar">KS</span><span className="user-name">Krit S.</span><span className="role-label">ADMIN</span></div>
+      </header>
+
+      <main className="internal-content">
+        <section className="welcome-row">
+          <div><p className="eyebrow">Internal maintenance</p><h1>Home</h1><p className="sub">งานซ่อมและประวัติการดูแลอุปกรณ์</p></div>
+          <a className="outline-action" href="/protected"><FileText data-icon="inline-start" /> Open work orders</a>
+        </section>
+
+        <section className="search-panel" aria-label="Search">
+          <Search data-icon="inline-start" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหาลูกค้า อุปกรณ์ หรือเลขที่งานซ่อม" aria-label="Search customer, equipment, or work order" />
+          <kbd>⌘ K</kbd>
+        </section>
+
+        <section className="summary-row" aria-label="Operational summary">
+          <div><span className="summary-dot new" /><span>New / waiting</span><strong>8</strong></div>
+          <div><span className="summary-dot progress" /><span>In progress</span><strong>4</strong></div>
+          <div><span className="summary-dot attention" /><span>ต้องติดตาม</span><strong>2</strong></div>
+        </section>
+
+        <div className="home-grid">
+          <section className="surface work-order-surface">
+            <div className="section-heading"><div><p className="eyebrow">Latest activity</p><h2>Recent work orders</h2></div><a href="/protected">View all <ChevronRight data-icon="inline-end" /></a></div>
+            <div className="order-list">
+              {filteredOrders.map((order) => <article className="order-row" key={order.id}><div className="order-main"><span className="order-id">{order.id}</span><h3>{order.issue}</h3><p>{order.customer} <span>·</span> {order.equipment}</p></div><div className="order-meta"><span className={`status status-${order.status.toLowerCase().replace(' ', '-')}`}>{order.status}</span><span className={`priority priority-${order.priority.toLowerCase()}`}>{order.priority}</span><time>{order.date}</time></div></article>)}
+              {!filteredOrders.length && <p className="empty-message">ไม่พบงานซ่อมที่ตรงกับคำค้นหา</p>}
+            </div>
+          </section>
+          <section className="surface quick-surface"><div className="section-heading"><div><p className="eyebrow">Navigate</p><h2>Quick access</h2></div></div><div className="quick-list">{quickLinks.map(({ label, detail, icon: Icon }) => <a href="/protected" className="quick-link" key={label}><span className="quick-icon"><Icon /></span><span><strong>{label}</strong><small>{detail}</small></span><ChevronRight /></a>)}</div></section>
+        </div>
+      </main>
+      <footer className="internal-footer"><span>Maintenance System</span><span>ADMIN workspace</span><a href="/protected"><Settings data-icon="inline-start" /> System</a></footer>
+    </div>
+  )
+}
